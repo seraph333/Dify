@@ -1,0 +1,69 @@
+[Dify]
+enable = true          # 是否启用插件
+default-model = "死鬼"  # 默认使用的模型
+commands = ["聊天", "AI"]
+# 聊天室功能已移除
+support_agent_mode = true  # 是否支持Agent模式：
+                          # true - 支持Agent模式，可以处理agent_thought、agent_message等事件
+                          # false - 仅支持基础聊天模式
+
+# 二类触发词设置
+secondary_triggers = [ "美腿", "买家秀", "早报", "诱惑", "黑丝", "白丝", "腹肌", "小姐姐", "摸鱼", "摸鱼视频", "jk", "微博热搜", "甩裙", "硅基流动", "玉足美腿", "你的欲梦",]  # 二类触发词列表，消息内容完全匹配这些词时直接触发，不删除前缀
+
+# 三类触发词设置
+tertiary_triggers = [ "点歌", "画", "学姐", "学长", "生成", "生图", "绘画", "喷", "夸", "识图", "随机图",]  # 三类触发词列表，消息以这些词开头时直接触发，不删除触发词前缀
+
+# 四类触发词设置
+quaternary_triggers = ["油价", "天气"]  # 四类触发词列表，消息以这些词结尾时直接触发，不删除触发词后缀
+
+# 文件缓存设置
+image_cache_timeout = 604800     # 图片缓存超时时间（秒），默认为1天
+file_cache_timeout = 604800     # 文件缓存超时时间（秒），默认为7天
+persistent_cache = true         # 是否使用持久化缓存，设为true则缓存在本地文件系统中保存
+# 图片处理设置 (这是新增的部分)
+combine_multiple_images = true     # 是否启用多图合并功能: true - 合并为一张图发送, false - 逐张发送
+
+command-tip = """💬AI聊天指令：
+1. 切换模型（将会一直保持到下次切换）：
+   - @死鬼 切换：切换到死鬼模型
+   - @学姐 切换：切换到学姐模型
+   - @学长 切换：切换到学长模型
+2. 临时使用其他模型：
+   - 死鬼 消息内容：临时使用死鬼模型
+   - 学姐 消息内容：临时使用死鬼模型
+   - 学长 消息内容：临时使用死鬼模型
+"""
+admin_ignore = true            # 管理员是否免积分，设为true则管理员不消耗积分使用AI
+whitelist_ignore = true        # 白名单用户是否免积分，设为true则白名单用户不消耗积分
+http-proxy = ""                # HTTP代理配置，格式为"http://代理地址:端口"，不需要则留空
+voice_reply_all = false        # 是否总是使用语音回复，设为true则所有回复都转为语音消息
+robot-names = [     #必须填机器人的昵称（不带@），否则会传递@机器人给dify
+    "死鬼",
+    "半兽人"
+    ]
+# 音频转文本和文本转音频 URL 将基于各模型的 base-url 自动构建
+
+[Dify.models]
+# 死鬼模型配置
+[Dify.models."死鬼"]
+api-key = "app-xxx"
+base-url = "https://api.dify.ai/v1"
+trigger-words = ["@死鬼"]
+wakeup-words = ["死鬼"]
+price = 0
+
+# 学姐模型配置
+[Dify.models."学姐"]
+api-key = "app-xxx"
+base-url = "https://api.dify.ai/v1"
+trigger-words = ["@学姐"]
+wakeup-words = ["是学姐"]
+price = 0
+
+# 学长模型配置
+[Dify.models."学长"]
+api-key = "app-xxx"
+base-url = "https://api.dify.ai/v1"
+trigger-words = ["@学长"]
+wakeup-words = ["是学长"]
+price = 0
