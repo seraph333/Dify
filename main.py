@@ -78,7 +78,8 @@ class ModelConfig:
 class Dify(PluginBase):
     description = "Dify插件 - 智能对话平台，支持多模型切换和会话管理"
     author = "老夏的金库"
-    version = "1.7.0-20"
+    version = "1.7.0-21"
+    #**1.7.0-21 2025-07-18** 修复当本地没有该图片时，重复引用的该图片，每次都会重复下载的问题
     #**1.7.0-20 2025-07-17** 1.不验证SSL证书,避免证书过期的网站下载图片失败。2.新增微信消息控制多图开关
     #**1.7.0-19 2025-07-15** 修复C计划引用识图后会重复保存图片的bug
     #**1.7.0-18 2025-07-15** 1.修复无法发送视频的bug。2.取消自动上传视频
@@ -307,14 +308,14 @@ class Dify(PluginBase):
 
     async def _save_image_and_get_md5(self, image_content: bytes) -> Optional[tuple[str, bytes]]:
         """
-        统一处理和保存图片，并返回最终JPEG内容的MD5和二进制内容。
+        统一处理图片，返回最终JPEG内容的MD5和二进制内容，但不再直接保存文件。
+        保存操作将由调用方根据需要决定。
         1. 将任何格式的图片转换为JPEG。
         2. 计算JPEG内容的MD5。
-        3. 以MD5为名保存到 self.files_dir 目录。
-        4. 返回 (MD5值, JPEG二进制内容) 的元组。
+        3. 返回 (MD5值, JPEG二进制内容) 的元组。
         """
         if not image_content:
-            logger.error("图片内容为空，无法保存。")
+            logger.error("图片内容为空，无法处理。")
             return None
         try:
             with Image.open(io.BytesIO(image_content)) as img:
@@ -335,17 +336,12 @@ class Dify(PluginBase):
 
                 # 计算最终JPEG内容的MD5
                 md5_hash = hashlib.md5(jpeg_content).hexdigest()
-                file_name = f"{md5_hash}.jpeg"
-                file_path = os.path.join(self.files_dir, file_name)
-
-                # 保存到文件系统
-                with open(file_path, "wb") as f:
-                    f.write(jpeg_content)
-
-                logger.info(f"图片已统一处理并保存至: {file_path}")
+                
+                # 注意：这里不再保存文件，只返回处理结果
+                # logger.info(f"图片已在内存中统一处理，MD5为: {md5_hash}")
                 return md5_hash, jpeg_content
         except Exception as e:
-            logger.error(f"统一保存图片时发生错误: {e}")
+            logger.error(f"统一处理图片时发生错误: {e}")
             logger.error(traceback.format_exc())
             return None
 
@@ -1374,62 +1370,36 @@ class Dify(PluginBase):
                         logger.error("B计划失败：XML中未找到<img>标签。")
                 except Exception as e:
                     logger.error(f"B计划执行下载时出错: {e}")
-
+#
             if image_data:
-                # --- 核心优化：C计划 ---
-                # 无论图片数据来自A计划（本地查找）还是B计划（下载），都执行以下逻辑
-                # 1. 计算下载/读取到的原始图片数据的MD5，这应该与xybot计算的MD5一致
-                import hashlib
-                md5_from_data = hashlib.md5(image_data).hexdigest()
+                # --- 核心修复逻辑开始 ---
+                # 无论图片来自何处，我们先在内存中将其转换为最终的JPEG格式，并计算其MD5
+                processed_info = await self._save_image_and_get_md5(image_data)
                 
-                # 2. 检查使用这个新计算的MD5，文件是否已经存在
-                #    Dify插件的_save_image_and_get_md5会转成jpeg，所以我们检查.jpeg
-                possible_extensions = ['.jpeg', '.jpg', '.png', '.gif', '.webp']
-                final_file_path = None
-                
-                # 优先检查Dify自己保存的jpeg格式
-                dify_saved_path = os.path.join(self.files_dir, f"{md5_from_data}.jpeg")
-                if os.path.exists(dify_saved_path):
-                    final_file_path = dify_saved_path
-                    logger.info(f"C计划成功：发现xybot或Dify已保存的图片(jpeg): {final_file_path}")
-                else:
-                    # 如果jpeg不存在，再检查其他可能的原始格式
-                    for ext in possible_extensions:
-                        path_to_check = os.path.join(self.files_dir, f"{md5_from_data}{ext}")
-                        if os.path.exists(path_to_check):
-                            final_file_path = path_to_check
-                            logger.info(f"C计划成功：发现xybot已保存的图片(原始格式): {final_file_path}")
-                            # 如果找到的是非jpeg，重新读取并让Dify统一处理
-                            with open(final_file_path, 'rb') as f:
-                                image_data = f.read()
-                            break
+                if processed_info:
+                    final_md5, jpeg_content = processed_info
+                    file_path = os.path.join(self.files_dir, f"{final_md5}.jpeg")
+                    
+                    # 检查这张处理后的图片是否已存在于本地
+                    if os.path.exists(file_path):
+                        logger.info(f"优化：处理后的图片 '{file_path}' 已在本地找到，无需重复下载和保存，直接上传。")
+                    else:
+                        # 如果不存在，则将内存中的jpeg内容写入文件
+                        with open(file_path, "wb") as f:
+                            f.write(jpeg_content)
+                        logger.info(f"新图片已处理并保存至: {file_path}")
 
-                if final_file_path:
-                    # 文件已存在，无需再次保存，直接准备上传
-                    logger.info(f"图片 '{final_file_path}' 已存在，直接上传。")
-                    # 【修复】直接将读取到的图片数据交给上传函数，它会自动处理压缩和格式转换，无需再次保存
-                    # 使用已读取的图片数据计算一个临时的文件名
-                    md5_from_data = hashlib.md5(image_data).hexdigest()
+                    # 准备上传文件到Dify
                     file_info = await self.upload_file_to_dify(
-                        image_data, f"{md5_from_data}.jpeg", "image/jpeg", user_wxid, model_config=model
+                        jpeg_content, f"{final_md5}.jpeg", "image/jpeg", user_wxid, model_config=model
                     )
                     if file_info:
                         files_to_upload.append(file_info)
                     else:
-                        logger.error("为已存在的图片准备上传信息时失败。")
+                        logger.error("为图片准备上传信息时失败。")
                 else:
-                    # C计划失败：本地确实没有这个文件，是全新的图片，需要处理并保存
-                    logger.info(f"C计划未找到本地文件，将处理并保存新下载的图片。")
-                    saved_info = await self._save_image_and_get_md5(image_data)
-                    if saved_info:
-                        md5_hash, jpeg_content = saved_info
-                        file_info = await self.upload_file_to_dify(
-                            jpeg_content, f"{md5_hash}.jpeg", "image/jpeg", user_wxid, model_config=model
-                        )
-                        if file_info:
-                            files_to_upload.append(file_info)
-                    else:
-                        logger.error("处理并保存新下载的图片时失败。")
+                    logger.error("处理下载的图片时失败，无法继续。")
+                # --- 核心修复逻辑结束 ---
             else:
                 logger.error("A计划和B计划均失败，无法获取引用的图片。")
                 # 在群聊中@发送者，私聊则直接发送
