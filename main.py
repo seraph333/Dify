@@ -34,7 +34,6 @@ import shutil
 from PIL import Image
 import xml.etree.ElementTree as ET
 #from utils.config_manager import ConfigManager
-# --- 新增代码开始 ---
 # 尝试导入Playwright下载器，如果失败则禁用该功能
 try:
     from .playwright_downloader import download_with_playwright
@@ -43,7 +42,6 @@ try:
 except ImportError:
     has_playwright_downloader = False
     logger.warning("未找到Playwright下载器或其依赖，特殊图片链接将使用标准方法下载。")
-# --- 新增代码结束 ---
 
 # 添加API代理导入
 try:
@@ -58,14 +56,11 @@ except ImportError:
     logger.warning("未找到API管理中心集成模块，Dify插件将使用直接连接")
 
 # 常量定义
-XYBOT_PREFIX = "----------\n"
+XYBOT_PREFIX = "-----温馨提示-----\n"
 DIFY_ERROR_MESSAGE = "🙅对不起，Dify出现错误！\n"
 INSUFFICIENT_POINTS_MESSAGE = "😭你的积分不够啦！需要 {price} 积分"
 VOICE_TRANSCRIPTION_FAILED = "\n语音转文字失败"
 TEXT_TO_VOICE_FAILED = "\n文本转语音失败"
-# 聊天室相关常量已移除
-
-# 聊天室相关类已移除
 
 @dataclass
 class ModelConfig:
@@ -78,8 +73,10 @@ class ModelConfig:
 class Dify(PluginBase):
     description = "Dify插件 - 智能对话平台，支持多模型切换和会话管理"
     author = "老夏的金库"
-    version = "1.7.0-21"
-    #**1.7.0-21 2025-07-18** 修复当本地没有该图片时，重复引用的该图片，每次都会重复下载的问题
+    version = "1.7.0-23"
+    #**1.7.0-23 2025-07-20** 持久化保存dify返回的图片（用户发送的图片xybot.py会保存）
+    #**1.7.0-22 2025-07-20** 取消重置对话指令的@回复
+    #**1.7.0-21 2025-07-18** 修复当本地没有该图片时，重复引用的该图片，每次都会重复下载的问题（取消C计划）
     #**1.7.0-20 2025-07-17** 1.不验证SSL证书,避免证书过期的网站下载图片失败。2.新增微信消息控制多图开关
     #**1.7.0-19 2025-07-15** 修复C计划引用识图后会重复保存图片的bug
     #**1.7.0-18 2025-07-15** 1.修复无法发送视频的bug。2.取消自动上传视频
@@ -191,11 +188,9 @@ class Dify(PluginBase):
             self.voice_reply_all = plugin_config["voice_reply_all"]
             self.robot_names = plugin_config.get("robot-names", [])
             self.combine_multiple_images = plugin_config.get("combine_multiple_images", True)
-
             # --- 性能优化 1: 使用集合(Set)进行快速查找 ---
             # 将列表转换为集合，使 `in` 操作的平均时间复杂度从 O(n) 降为 O(1)
             self.secondary_triggers = set(plugin_config.get("secondary_triggers", []))
-            
             self.tertiary_triggers = plugin_config.get("tertiary_triggers", [])
             self.quaternary_triggers = plugin_config.get("quaternary_triggers", [])
             self.remember_user_model = plugin_config.get("remember_user_model", True)
@@ -224,10 +219,8 @@ class Dify(PluginBase):
         self.files_dir = "files"
         os.makedirs(self.files_dir, exist_ok=True)
         self.processor = ImageProcessor(save_dir=self.files_dir)
-
         self.current_agent_thoughts = {}
         self.agent_files = {}
-
         self.wakeup_word_to_model = {}
         logger.info("开始加载唤醒词配置:")
         for model_name, model_config in self.models.items():
@@ -283,20 +276,16 @@ class Dify(PluginBase):
         else:
             logger.warning(f"不支持动态修改配置项: {key}")
             return False
-    
         # 2. 将修改写回 config.toml 文件，使其永久生效
         try:
             # 使用 'tomlkit' 库读取现有配置，它会保留所有格式
             with open(self.config_path, "r", encoding="utf-8") as f:
                 config_data = tomlkit.load(f)
-    
             # 修改字典中的值
             config_data["Dify"][key] = value
-    
             # 将修改后的整个配置写回文件，格式将被保留
             with open(self.config_path, "w", encoding="utf-8") as f:
                 tomlkit.dump(config_data, f)
-            
             logger.success(f"成功将配置 '{key} = {value}' 保存到 {self.config_path}")
             return True
         except FileNotFoundError:
@@ -333,10 +322,8 @@ class Dify(PluginBase):
                 output_buffer = io.BytesIO()
                 img.save(output_buffer, format='JPEG', quality=95)
                 jpeg_content = output_buffer.getvalue()
-
                 # 计算最终JPEG内容的MD5
                 md5_hash = hashlib.md5(jpeg_content).hexdigest()
-                
                 # 注意：这里不再保存文件，只返回处理结果
                 # logger.info(f"图片已在内存中统一处理，MD5为: {md5_hash}")
                 return md5_hash, jpeg_content
@@ -648,7 +635,6 @@ class Dify(PluginBase):
             return
 
         content = message["Content"].strip()
-        # --- 新增代码开始：处理管理员指令 ---
         sender_wxid = message["SenderWxid"]
         # 检查发消息的人是否是管理员
         if sender_wxid in self.admins:
@@ -663,7 +649,6 @@ class Dify(PluginBase):
                 reply = "✅ 多图合并功能已关闭，将逐张发送图片。" if success else "❌ 关闭失败，请查看后台日志。"
                 await bot.send_text_message(message["FromWxid"], reply)
                 return # 处理完毕，不再执行后续逻辑
-        # --- 新增代码结束 ---
 
         command = content.split(" ")[0] if content else ""
 
@@ -680,9 +665,9 @@ class Dify(PluginBase):
             if success:
                 # 重置成功，发送通知
                 if message.get("IsGroup", False):
-                    await bot.send_at_message(
+                    await bot.send_text_message(
                         message["FromWxid"],
-                        "\n对话已重置，我已经忘记了之前的对话内容。",
+                        "对话已重置，我已经忘记了之前的对话内容。",
                         [message["SenderWxid"]]
                     )
                 else:
@@ -693,9 +678,9 @@ class Dify(PluginBase):
             else:
                 # 重置失败，发送通知
                 if message.get("IsGroup", False):
-                    await bot.send_at_message(
+                    await bot.send_text_message(
                         message["FromWxid"],
-                        "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                        "重置对话失败，可能是因为没有活跃的对话或发生了错误。",
                         [message["SenderWxid"]]
                     )
                 else:
@@ -738,12 +723,12 @@ class Dify(PluginBase):
                 if success:
                     await bot.send_text_message(
                         message["FromWxid"],
-                        f"{XYBOT_PREFIX}✅ 已重置对话，开始新的会话！"
+                        f"✅ 已重置对话，开始新的会话！"
                     )
                 else:
                     await bot.send_text_message(
                         message["FromWxid"],
-                        f"{XYBOT_PREFIX}❌ 重置对话失败，请稍后重试。"
+                        f"❌ 重置对话失败，请稍后重试。"
                     )
                 return
 
@@ -845,20 +830,20 @@ class Dify(PluginBase):
                 if success:
                     await bot.send_text_message(
                         message["FromWxid"],
-                        f"{XYBOT_PREFIX}✅ 已重置对话，开始新的会话！"
+                        f"✅ 已重置对话，开始新的对话！"
                     )
                 else:
                     await bot.send_text_message(
                         message["FromWxid"],
-                        f"{XYBOT_PREFIX}❌ 重置对话失败，请稍后重试。"
+                        f"❌ 重置对话失败，请稍后重试。"
                     )
                 return
 
             if is_switch:
                 model_name = next(name for name, config in self.models.items() if config == model)
-                await bot.send_at_message(
+                await bot.send_text_message(
                     group_id,
-                    f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
+                    f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
                     [user_wxid]
                 )
                 return
@@ -877,9 +862,9 @@ class Dify(PluginBase):
                 for trigger in model_config.trigger_words:
                     if content.lower().startswith(trigger.lower()):
                         self.set_user_model(user_wxid, model_config)
-                        await bot.send_at_message(
+                        await bot.send_text_message(
                             group_id,
-                            f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
+                            f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
                             [user_wxid]
                         )
                         return
@@ -894,16 +879,16 @@ class Dify(PluginBase):
 
             if success:
                 # 重置成功，发送通知
-                await bot.send_at_message(
+                await bot.send_text_message(
                     group_id,
-                    "\n对话已重置，我已经忘记了之前的对话内容。",
+                    "对话已重置，我已经忘记了之前的对话内容。",
                     [user_wxid]
                 )
             else:
                 # 重置失败，发送通知
-                await bot.send_at_message(
+                await bot.send_text_message(
                     group_id,
-                    "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                    "重置对话失败，可能是因为没有活跃的对话或发生了错误。",
                     [user_wxid]
                 )
             return
@@ -946,12 +931,12 @@ class Dify(PluginBase):
             if success:
                 await bot.send_text_message(
                     message["FromWxid"],
-                    f"{XYBOT_PREFIX}✅ 已重置对话，开始新的会话！"
+                    f"✅ 已重置对话，开始新的对话！"
                 )
             else:
                 await bot.send_text_message(
                     message["FromWxid"],
-                    f"{XYBOT_PREFIX}❌ 重置对话失败，请稍后重试。"
+                    f"❌ 重置对话失败，请稍后重试。"
                 )
             return
 
@@ -996,7 +981,7 @@ class Dify(PluginBase):
                 model_name = next((name for name, config in self.models.items() if config == wakeup_model), '未知')
                 logger.error(f"唤醒词对应模型 '{model_name}' 的API密钥未配置")
                 if message.get("IsGroup"):
-                    await bot.send_at_message(group_id, f"\n此模型API密钥未配置，请联系管理员", [user_wxid])
+                    await bot.send_text_message(group_id, f"此模型API密钥未配置，请联系管理员", [user_wxid])
                 else:
                     await bot.send_text_message(message["FromWxid"], "此模型API密钥未配置，请联系管理员")
             return
@@ -1081,9 +1066,9 @@ class Dify(PluginBase):
                         model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
                         if is_switch:
                             model_name = next(name for name, config in self.models.items() if config == model)
-                            await bot.send_at_message(
+                            await bot.send_text_message(
                                 message["FromWxid"],
-                                f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
+                                f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
                                 [message["SenderWxid"]]
                             )
                             return
@@ -1101,7 +1086,7 @@ class Dify(PluginBase):
             return
 
         if not self.current_model.api_key:
-            await bot.send_at_message(message["FromWxid"], "\n你还没配置Dify API密钥！", [message["SenderWxid"]])
+            await bot.send_text_message(message["FromWxid"], "你还没配置Dify API密钥！", [message["SenderWxid"]])
             return False
 
         await self.check_and_notify_inactive_users(bot)
@@ -1120,16 +1105,16 @@ class Dify(PluginBase):
 
             if success:
                 # 重置成功，发送通知
-                await bot.send_at_message(
+                await bot.send_text_message(
                     message["FromWxid"],
-                    "\n对话已重置，我已经忘记了之前的对话内容。",
+                    "对话已重置，我已经忘记了之前的对话内容。",
                     [message["SenderWxid"]]
                 )
             else:
                 # 重置失败，发送通知
-                await bot.send_at_message(
+                await bot.send_text_message(
                     message["FromWxid"],
-                    "\n重置对话失败，可能是因为没有活跃的对话或发生了错误。",
+                    "重置对话失败，可能是因为没有活跃的对话或发生了错误。",
                     [message["SenderWxid"]]
                 )
             return
@@ -1178,16 +1163,16 @@ class Dify(PluginBase):
         logger.debug(f"提取到的 query: {query}")
 
         if not query:
-            await bot.send_at_message(message["FromWxid"], "\n请输入你的问题或指令。", [message["SenderWxid"]])
+            await bot.send_text_message(message["FromWxid"], "请输入你的问题或指令。", [message["SenderWxid"]])
             return False
 
         # 检查唤醒词或触发词，在图片上传前获取对应模型
         model, processed_query, is_switch = self.get_model_from_message(query, message["SenderWxid"])
         if is_switch:
             model_name = next(name for name, config in self.models.items() if config == model)
-            await bot.send_at_message(
+            await bot.send_text_message(
                 message["FromWxid"],
-                f"\n已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
+                f"已切换到{model_name.upper()}模型，将一直使用该模型直到下次切换。",
                 [message["SenderWxid"]]
             )
             return False
@@ -1196,7 +1181,7 @@ class Dify(PluginBase):
         if not model.api_key:
             model_name = next((name for name, config in self.models.items() if config == model), '未知')
             logger.error(f"所选模型 '{model_name}' 的API密钥未配置")
-            await bot.send_at_message(message["FromWxid"], f"\n此模型API密钥未配置，请联系管理员", [message["SenderWxid"]])
+            await bot.send_text_message(message["FromWxid"], f"此模型API密钥未配置，请联系管理员", [message["SenderWxid"]])
             return False
 
         # 检查是否有最近的图片
@@ -1405,7 +1390,7 @@ class Dify(PluginBase):
                 # 在群聊中@发送者，私聊则直接发送
                 reply_text = "抱歉，无法识别引用的图片信息。"
                 if is_group_chat:
-                    await bot.send_at_message(message["FromWxid"], f"\n{reply_text}", [user_wxid])
+                    await bot.send_text_message(message["FromWxid"], f"{reply_text}", [user_wxid])
                 else:
                     await bot.send_text_message(message["FromWxid"], reply_text)
                 return False
@@ -1957,7 +1942,7 @@ class Dify(PluginBase):
                             # 通知用户
                             await bot.send_text_message(
                                 message["FromWxid"],
-                                f"{XYBOT_PREFIX}检测到对话异常，已重置对话。正在重新处理您的问题..."
+                                f"检测到对话异常，已重置对话。正在重新处理您的问题..."
                             )
 
                             # 等待一小段时间，确保数据库操作完成
@@ -2036,7 +2021,7 @@ class Dify(PluginBase):
                                         logger.error(f"重试请求失败: HTTP {new_resp.status} - {error_msg}")
                                         await bot.send_text_message(
                                             message["FromWxid"],
-                                            f"{XYBOT_PREFIX}重试请求失败，请稍后再试。"
+                                            f"重试请求失败，请稍后再试。"
                                         )
                                         return
 
@@ -2321,7 +2306,7 @@ class Dify(PluginBase):
 
     async def dify_handle_image(self, bot: WechatAPIClient, message: dict, image_url: str, model_config=None):
         """
-        【核心修改】处理Dify返回的单个图片URL，直接从内存发送数据，并忽略SSL错误。
+        【核心修改】处理Dify返回的单个图片URL，增加保存功能，并从内存发送数据。
         """
         try:
             logger.info(f"准备处理图片URL: {image_url}")
@@ -2340,7 +2325,6 @@ class Dify(PluginBase):
                     logger.warning("Playwright下载失败，回退到标准HTTP下载...")
                 
                 logger.info("使用标准HTTP下载器。")
-                # --- 关键修复点 ---
                 # 创建一个不验证SSL证书的连接器
                 connector = aiohttp.TCPConnector(ssl=False)
                 async with aiohttp.ClientSession(connector=connector) as session:
@@ -2353,7 +2337,6 @@ class Dify(PluginBase):
                                 logger.error(f"标准下载失败: HTTP {resp.status} for {image_url}")
                     except aiohttp.ClientConnectorError as e:
                         logger.error(f"标准下载时连接错误: {e}")
-                        # 即使有连接错误，也继续尝试，因为可能已经被上层捕获处理
             
             if not image_content:
                 logger.error(f"所有下载方法均失败，无法获取图片: {image_url}")
@@ -2361,9 +2344,23 @@ class Dify(PluginBase):
                 return
     
             # --- 统一保存和发送逻辑 ---
-            result = await self._save_image_and_get_md5(image_content)
-            if result:
-                _ , jpeg_content = result
+            processed_info = await self._save_image_and_get_md5(image_content)
+            if processed_info:
+                # 同时获取md5和jpeg内容
+                md5_hash, jpeg_content = processed_info
+                
+                # --- 新增的核心修复逻辑 ---
+                # 根据计算出的MD5构建文件路径
+                file_path = os.path.join(self.files_dir, f"{md5_hash}.jpeg")
+                try:
+                    # 以二进制写入模式(wb)保存处理后的JPEG图片内容
+                    with open(file_path, "wb") as f:
+                        f.write(jpeg_content)
+                    # 打印成功日志，方便追踪
+                    logger.success(f"Dify返回的图片已成功保存到: {file_path}")
+                except Exception as e:
+                    logger.error(f"保存Dify返回的图片失败: {e}")
+                # --- 修复逻辑结束 ---
                 
                 if jpeg_content:
                     logger.info(f"图片下载并统一处理成功，将通过【内存数据】直接发送，大小: {len(jpeg_content)}字节")
@@ -2376,7 +2373,6 @@ class Dify(PluginBase):
         except Exception as e:
             logger.error(f"处理图片URL时发生严重错误: {e}")
             logger.error(traceback.format_exc())
-            # 避免因为 aiohttp 的 ClientConnectorCertificateError 重复发送错误信息
             if not isinstance(e, aiohttp.ClientConnectorCertificateError):
                 await bot.send_text_message(message["FromWxid"], f"处理图片失败: {str(e)}")
 
